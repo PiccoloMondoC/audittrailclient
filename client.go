@@ -1,3 +1,4 @@
+// sky-audittrail/pkg/clientlib/audittrailclient/client.go
 package audittrailclient
 
 import (
@@ -6,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"net/url"
 	"strings"
 	"time"
 
@@ -17,6 +17,8 @@ import (
 type Client struct {
 	BaseURL    string
 	HttpClient *http.Client
+	Token      string
+	ApiKey     string
 }
 
 type AuditTrail struct {
@@ -37,7 +39,7 @@ type AuditTrailFilter struct {
 	EndDate    *time.Time
 }
 
-func NewClient(baseURL string, httpClient ...*http.Client) *Client {
+func NewClient(baseURL string, token string, apiKey string, httpClient ...*http.Client) *Client {
 	var client *http.Client
 	if len(httpClient) > 0 {
 		client = httpClient[0]
@@ -50,6 +52,8 @@ func NewClient(baseURL string, httpClient ...*http.Client) *Client {
 	return &Client{
 		BaseURL:    baseURL,
 		HttpClient: client,
+		Token:      token,
+		ApiKey:     apiKey,
 	}
 }
 
@@ -66,6 +70,10 @@ func (c *Client) LogAction(auditTrail AuditTrail) (bool, error) {
 		return false, err
 	}
 
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+c.Token)
+	req.Header.Set("X-API-Key", c.ApiKey)
+
 	resp, err := c.HttpClient.Do(req)
 	if err != nil {
 		return false, err
@@ -73,6 +81,37 @@ func (c *Client) LogAction(auditTrail AuditTrail) (bool, error) {
 	defer resp.Body.Close()
 
 	return resp.StatusCode == http.StatusCreated, nil
+}
+
+// Helper function for GET requests
+func (c *Client) getAuditTrail(apiUrl string) ([]AuditTrail, error) {
+	var auditTrails []AuditTrail
+
+	req, err := http.NewRequest(http.MethodGet, apiUrl, nil)
+	if err != nil {
+		return auditTrails, err
+	}
+
+	req.Header.Set("Authorization", "Bearer "+c.Token)
+	req.Header.Set("X-API-Key", c.ApiKey)
+
+	resp, err := c.HttpClient.Do(req)
+	if err != nil {
+		return auditTrails, err
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return auditTrails, err
+	}
+
+	err = json.Unmarshal(body, &auditTrails)
+	if err != nil {
+		return auditTrails, err
+	}
+
+	return auditTrails, nil
 }
 
 func (c *Client) GetAuditTrailByEntityID(entityID uuid.UUID) ([]AuditTrail, error) {
@@ -100,41 +139,25 @@ func (c *Client) GetAuditTrailByEntityName(entityName string) ([]AuditTrail, err
 	return c.getAuditTrail(apiUrl)
 }
 
-func (c *Client) GetFilteredAuditTrail(filter *AuditTrailFilter) ([]AuditTrail, error) {
-	params := url.Values{}
-
-	if filter.UserID != nil {
-		params.Add("user_id", filter.UserID.String())
-	}
-	if filter.ActionType != nil {
-		params.Add("action_type", *filter.ActionType)
-	}
-	if filter.EntityName != nil {
-		params.Add("entity_name", *filter.EntityName)
-	}
-	if filter.StartDate != nil {
-		params.Add("start_date", filter.StartDate.Format(time.RFC3339))
-	}
-	if filter.EndDate != nil {
-		params.Add("end_date", filter.EndDate.Format(time.RFC3339))
-	}
-
-	apiUrl := fmt.Sprintf("%s/audit-trail/filtered?%s", c.BaseURL, params.Encode())
-
-	return c.getAuditTrail(apiUrl)
-}
-
-// Helper function for GET requests
-func (c *Client) getAuditTrail(apiUrl string) ([]AuditTrail, error) {
+func (c *Client) postAuditTrail(apiUrl string, body io.Reader) ([]AuditTrail, error) {
 	var auditTrails []AuditTrail
 
-	resp, err := c.HttpClient.Get(apiUrl)
+	req, err := http.NewRequest(http.MethodPost, apiUrl, body)
+	if err != nil {
+		return auditTrails, err
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+c.Token)
+	req.Header.Set("X-API-Key", c.ApiKey)
+
+	resp, err := c.HttpClient.Do(req)
 	if err != nil {
 		return auditTrails, err
 	}
 	defer resp.Body.Close()
 
-	body, err := io.ReadAll(resp.Body)
+	body, err = io.ReadAll(resp.Body)
 	if err != nil {
 		return auditTrails, err
 	}
@@ -145,4 +168,15 @@ func (c *Client) getAuditTrail(apiUrl string) ([]AuditTrail, error) {
 	}
 
 	return auditTrails, nil
+}
+
+func (c *Client) GetFilteredAuditTrail(filter *AuditTrailFilter) ([]AuditTrail, error) {
+	apiUrl := fmt.Sprintf("%s/getFilteredAuditTrail", c.BaseURL)
+
+	filterJson, err := json.Marshal(filter)
+	if err != nil {
+		return nil, err
+	}
+
+	return c.postAuditTrail(apiUrl, bytes.NewBuffer(filterJson))
 }
