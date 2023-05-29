@@ -156,12 +156,12 @@ func (c *Client) postAuditTrail(apiUrl string, body io.Reader) ([]AuditTrail, er
 	}
 	defer resp.Body.Close()
 
-	body, err = io.ReadAll(resp.Body)
+	responseBody, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return auditTrails, err
 	}
 
-	err = json.Unmarshal(body, &auditTrails)
+	err = json.Unmarshal(responseBody, &auditTrails)
 	if err != nil {
 		return auditTrails, err
 	}
